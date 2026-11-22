@@ -1,0 +1,12 @@
+// Jiggasha database schema (built slice by slice)
+// Prisma 6.x pinned
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
