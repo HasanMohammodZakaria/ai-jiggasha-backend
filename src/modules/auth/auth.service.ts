@@ -6,7 +6,11 @@ import {
 } from "../../providers/storage/cloudinary.js";
 import { AppError } from "../../shared/errors.js";
 import { processAvatar } from "../../shared/image.js";
-import { hashPassword } from "../../shared/password.js";
+import {
+  hashPassword,
+  verifyAgainstDummy,
+  verifyPassword,
+} from "../../shared/password.js";
 import {
   generateRefreshToken,
   hashRefreshToken,
@@ -15,7 +19,7 @@ import {
   signAccessToken,
 } from "../../shared/tokens.js";
 import * as repo from "./auth.repository.js";
-import type { RegisterInput } from "./auth.validators.js";
+import type { LoginInput, RegisterInput } from "./auth.validators.js";
 
 export interface SessionMeta {
   userAgent: string | null;
@@ -30,10 +34,13 @@ export interface PublicUser {
   createdAt: Date;
 }
 
-export interface AuthResult {
-  user: PublicUser;
+export interface Tokens {
   accessToken: string;
   refreshToken: string;
+}
+
+export interface AuthResult extends Tokens {
+  user: PublicUser;
 }
 
 // Never return passwordHash or storage keys to the client.
@@ -52,6 +59,23 @@ function emailTaken(): AppError {
     409,
     "EMAIL_ALREADY_USED",
     "An account with this email already exists",
+  );
+}
+
+function invalidCredentials(): AppError {
+  return new AppError(
+    401,
+    "INVALID_CREDENTIALS",
+    "Incorrect email or password",
+  );
+}
+
+// One message for every refresh problem (unknown, expired, reused): attackers learn nothing.
+function sessionExpired(): AppError {
+  return new AppError(
+    401,
+    "SESSION_EXPIRED",
+    "Your session has expired. Please log in again.",
   );
 }
 
@@ -105,4 +129,86 @@ export async function register(
       throw emailTaken();
     throw err;
   }
+}
+
+export async function login(
+  input: LoginInput,
+  meta: SessionMeta,
+): Promise<AuthResult> {
+  const user = await repo.findUserByEmail(input.email);
+
+  // Unknown email and Google-only accounts (no password) look exactly like a wrong password.
+  if (!user?.passwordHash) {
+    await verifyAgainstDummy(input.password); // same work as a real check, so timing does not leak
+    throw invalidCredentials();
+  }
+  if (!(await verifyPassword(user.passwordHash, input.password)))
+    throw invalidCredentials();
+
+  // New login = new session family.
+  const refreshToken = generateRefreshToken();
+  await repo.createRefreshToken({
+    userId: user.id,
+    familyId: newFamilyId(),
+    tokenHash: hashRefreshToken(refreshToken),
+    expiresAt: refreshTokenExpiry(),
+    userAgent: meta.userAgent,
+    ipAddress: meta.ipAddress,
+  });
+  return {
+    user: toPublicUser(user),
+    accessToken: signAccessToken(user.id),
+    refreshToken,
+  };
+}
+
+// Rotation: every refresh token works exactly once and is replaced by a new one.
+export async function refresh(
+  rawToken: string,
+  meta: SessionMeta,
+): Promise<Tokens> {
+  const record = await repo.findRefreshTokenByHash(hashRefreshToken(rawToken));
+  if (!record) throw sessionExpired();
+
+  if (record.revokedAt) {
+    // An already-used token came back: it may have been stolen. End the whole session family.
+    await repo.revokeFamily(record.familyId);
+    throw sessionExpired();
+  }
+  if (record.expiresAt <= new Date()) throw sessionExpired();
+
+  const newToken = generateRefreshToken();
+  const newId = randomUUID();
+
+  // Only one request can win this update; a parallel request with the same token loses.
+  if (!(await repo.markRotated(record.id, newId))) {
+    await repo.revokeFamily(record.familyId);
+    throw sessionExpired();
+  }
+
+  await repo.createRefreshToken({
+    id: newId,
+    userId: record.userId,
+    familyId: record.familyId,
+    tokenHash: hashRefreshToken(newToken),
+    expiresAt: refreshTokenExpiry(),
+    userAgent: meta.userAgent,
+    ipAddress: meta.ipAddress,
+  });
+
+  return {
+    accessToken: signAccessToken(record.userId),
+    refreshToken: newToken,
+  };
+}
+
+export async function logout(rawToken: string): Promise<void> {
+  const record = await repo.findRefreshTokenByHash(hashRefreshToken(rawToken));
+  if (record) await repo.revokeFamily(record.familyId);
+}
+
+export async function getCurrentUser(userId: string): Promise<PublicUser> {
+  const user = await repo.findUserById(userId);
+  if (!user) throw new AppError(401, "UNAUTHENTICATED", "Please log in");
+  return toPublicUser(user);
 }

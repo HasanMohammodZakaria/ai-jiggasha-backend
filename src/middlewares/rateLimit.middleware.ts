@@ -25,5 +25,9 @@ function limiter(
   });
 }
 
-// 10 sign-ups per hour per IP in production (relaxed in development for testing)
-export const registerLimiter = limiter(60 * 60 * 1000, 10, 200);
+const MINUTE = 60 * 1000;
+
+// Per IP. Production limits are strict; development limits are relaxed for testing.
+export const registerLimiter = limiter(60 * MINUTE, 10, 200);
+export const loginLimiter = limiter(15 * MINUTE, 10, 200);
+export const refreshLimiter = limiter(15 * MINUTE, 60, 500);
