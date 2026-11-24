@@ -28,6 +28,16 @@ const envSchema = z
         /\.apps\.googleusercontent\.com$/,
         "must end with .apps.googleusercontent.com",
       ),
+    BREVO_API_KEY: z.string().min(10),
+    EMAIL_FROM_ADDRESS: z.email(),
+    EMAIL_FROM_NAME: z.string().min(1).default("Jiggasha"),
+    PASSWORD_RESET_TTL_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(5)
+      .max(120)
+      .default(15),
+
     CLOUDINARY_CLOUD_NAME: z.string().min(1),
     CLOUDINARY_API_KEY: z.string().min(1),
     CLOUDINARY_API_SECRET: z.string().min(1),
