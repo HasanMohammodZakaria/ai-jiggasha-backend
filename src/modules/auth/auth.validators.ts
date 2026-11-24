@@ -6,6 +6,11 @@ const email = z
   .toLowerCase()
   .pipe(z.email("Enter a valid email address").max(255));
 
+const password = z
+  .string()
+  .min(8, "Password must be at least 8 characters")
+  .max(128, "Password is too long");
+
 export const registerSchema = z
   .strictObject({
     fullName: z
@@ -14,10 +19,7 @@ export const registerSchema = z
       .min(2, "Name must be at least 2 characters")
       .max(80, "Name is too long"),
     email,
-    password: z
-      .string()
-      .min(8, "Password must be at least 8 characters")
-      .max(128, "Password is too long"),
+    password,
     confirmPassword: z.string().min(1, "Please confirm your password"),
   })
   .refine((v) => v.password === v.confirmPassword, {
@@ -40,7 +42,43 @@ export const googleSchema = z.strictObject({
     .max(4096, "Invalid Google credential"),
 });
 
-export type RegisterInput = z.infer<typeof registerSchema>;
+export const forgotPasswordSchema = z.strictObject({ email });
 
+export const resetPasswordSchema = z
+  .strictObject({
+    token: z
+      .string()
+      .min(20, "Invalid reset token")
+      .max(200, "Invalid reset token"),
+    password,
+    confirmPassword: z.string().min(1, "Please confirm your password"),
+  })
+  .refine((v) => v.password === v.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords do not match",
+  });
+
+export const changePasswordSchema = z
+  .strictObject({
+    currentPassword: z
+      .string()
+      .min(1, "Current password is required")
+      .max(128, "Password is too long"),
+    newPassword: password,
+    confirmPassword: z.string().min(1, "Please confirm your new password"),
+  })
+  .refine((v) => v.newPassword === v.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords do not match",
+  })
+  .refine((v) => v.newPassword !== v.currentPassword, {
+    path: ["newPassword"],
+    message: "New password must be different from the current one",
+  });
+
+export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type GoogleInput = z.infer<typeof googleSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

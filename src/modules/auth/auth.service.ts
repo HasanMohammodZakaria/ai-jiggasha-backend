@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type User } from "@prisma/client";
+import { env } from "../../config/env.js";
+import { logger } from "../../config/logger.js";
 import { verifyGoogleCredential } from "../../providers/auth/google.verifier.js";
+import { sendMail, type Mail } from "../../providers/email/brevo.mailer.js";
+import {
+  passwordChangedMail,
+  passwordResetMail,
+} from "../../providers/email/email.templates.js";
 import {
   deleteImage,
   uploadAvatarImage,
@@ -14,7 +21,9 @@ import {
 } from "../../shared/password.js";
 import {
   generateRefreshToken,
+  generateResetToken,
   hashRefreshToken,
+  hashResetToken,
   newFamilyId,
   refreshTokenExpiry,
   signAccessToken,
@@ -315,4 +324,130 @@ export async function getCurrentUser(userId: string): Promise<PublicUser> {
   const user = await repo.findUserById(userId);
   if (!user) throw new AppError(401, "UNAUTHENTICATED", "Please log in");
   return toPublicUser(user);
+}
+
+// ---------- Forgot / reset / change password ----------
+
+const MAX_RESET_EMAILS_PER_HOUR = 3;
+
+function invalidResetToken(): AppError {
+  return new AppError(
+    400,
+    "INVALID_RESET_TOKEN",
+    "This reset link is invalid or has expired. Please request a new one.",
+  );
+}
+
+// Notification emails must never slow down or break the request that triggered them.
+function sendInBackground(mail: Mail): void {
+  void sendMail(mail).catch((err: unknown) => {
+    logger.error(
+      { errorName: err instanceof Error ? err.name : "unknown" },
+      "Background email failed",
+    );
+  });
+}
+
+// The controller answers the client first, then runs this. It does nothing visible when the
+// email is unknown, so the response never reveals which emails are registered.
+export async function requestPasswordReset(
+  email: string,
+  meta: SessionMeta,
+): Promise<void> {
+  const user = await repo.findUserByEmail(email);
+  if (!user) return;
+
+  // Per-account cap: stops someone from flooding a student's inbox.
+  const since = new Date(Date.now() - 60 * 60 * 1000);
+  if (
+    (await repo.countRecentResetTokens(user.id, since)) >=
+    MAX_RESET_EMAILS_PER_HOUR
+  )
+    return;
+
+  const token = generateResetToken();
+  await repo.invalidateResetTokens(user.id); // only the newest link works
+  await repo.createPasswordResetToken({
+    userId: user.id,
+    tokenHash: hashResetToken(token),
+    expiresAt: new Date(
+      Date.now() + env.PASSWORD_RESET_TTL_MINUTES * 60 * 1000,
+    ),
+    requestedIp: meta.ipAddress,
+    requestedUserAgent: meta.userAgent,
+  });
+
+  const link = `${env.FRONTEND_ORIGIN}/reset-password?token=${token}`;
+  await sendMail({
+    to: user.email,
+    ...passwordResetMail({
+      name: user.fullName,
+      link,
+      minutes: env.PASSWORD_RESET_TTL_MINUTES,
+    }),
+  });
+}
+
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<void> {
+  const record = await repo.findResetTokenByHash(hashResetToken(token));
+  if (!record || record.usedAt || record.expiresAt <= new Date())
+    throw invalidResetToken();
+
+  const passwordHash = await hashPassword(newPassword);
+
+  // Single use: if two requests race with the same link, only one gets past this line.
+  if (!(await repo.consumeResetToken(record.id))) throw invalidResetToken();
+
+  // Having the emailed link proves the owner controls the address.
+  await repo.setPasswordAndRevokeSessions(
+    record.userId,
+    passwordHash,
+    record.user.emailVerifiedAt === null,
+  );
+  await repo.invalidateResetTokens(record.userId);
+
+  sendInBackground({
+    to: record.user.email,
+    ...passwordChangedMail({ name: record.user.fullName }),
+  });
+}
+
+// Logged-in password change. Other devices are logged out; this device gets a fresh session.
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+  meta: SessionMeta,
+): Promise<Tokens> {
+  const user = await repo.findUserById(userId);
+  if (!user) throw new AppError(401, "UNAUTHENTICATED", "Please log in");
+
+  if (!user.passwordHash) {
+    throw new AppError(
+      400,
+      "NO_PASSWORD_SET",
+      'Your account has no password yet. Use "Forgot password" to set one.',
+    );
+  }
+  if (!(await verifyPassword(user.passwordHash, currentPassword))) {
+    // 400, not 401: the frontend treats 401 as "session expired" and would try to refresh.
+    throw new AppError(
+      400,
+      "INCORRECT_CURRENT_PASSWORD",
+      "The current password is incorrect",
+    );
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await repo.setPasswordAndRevokeSessions(user.id, passwordHash, false);
+  await repo.invalidateResetTokens(user.id); // an old reset link must not undo this change
+
+  sendInBackground({
+    to: user.email,
+    ...passwordChangedMail({ name: user.fullName }),
+  });
+  return startSession(user.id, meta);
 }

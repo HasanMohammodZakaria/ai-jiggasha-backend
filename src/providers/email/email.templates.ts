@@ -41,11 +41,11 @@ export function passwordChangedMail(params: { name: string }): MailBody {
     subject: "Your Jiggasha password was changed",
     text:
       `Hi ${params.name},\n\n` +
-      `Your Jiggasha password was just changed and you were logged out on all devices.\n` +
+      `Your Jiggasha password was just changed. For your security, other signed-in devices were logged out.\n` +
       `If this was not you, reset your password right away and check your account.\n`,
     html:
       `<p>Hi ${name},</p>` +
-      `<p>Your Jiggasha password was just changed and you were logged out on all devices.</p>` +
+      `<p>Your Jiggasha password was just changed. For your security, other signed-in devices were logged out.</p>` +
       `<p>If this was not you, reset your password right away and check your account.</p>`,
   };
 }

@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { logger } from "../../config/logger.js";
 import {
   clearAuthCookies,
   REFRESH_COOKIE,
@@ -7,9 +8,12 @@ import {
 import { AppError } from "../../shared/errors.js";
 import * as authService from "./auth.service.js";
 import type {
+  ChangePasswordInput,
+  ForgotPasswordInput,
   GoogleInput,
   LoginInput,
   RegisterInput,
+  ResetPasswordInput,
 } from "./auth.validators.js";
 
 function sessionMeta(req: Request): authService.SessionMeta {
@@ -84,4 +88,54 @@ export async function me(req: Request, res: Response): Promise<void> {
   if (!userId) throw new AppError(401, "UNAUTHENTICATED", "Please log in");
   const user = await authService.getCurrentUser(userId);
   res.json({ data: { user } });
+}
+
+// Always the same answer, whether or not the email has an account.
+// The real work (database, email) runs after the response, so timing does not leak either.
+export async function forgotPassword(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const input = req.body as ForgotPasswordInput;
+  res.json({
+    data: {
+      message:
+        "If an account exists for this email, we have sent a reset link.",
+    },
+  });
+  authService
+    .requestPasswordReset(input.email, sessionMeta(req))
+    .catch((err: unknown) => {
+      logger.error(
+        { errorName: err instanceof Error ? err.name : "unknown" },
+        "Password reset request failed",
+      );
+    });
+}
+
+export async function resetPassword(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const input = req.body as ResetPasswordInput;
+  await authService.resetPassword(input.token, input.password);
+  clearAuthCookies(res); // the user must log in again with the new password
+  res.json({ data: { ok: true } });
+}
+
+export async function changePassword(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const userId = req.user?.id;
+  if (!userId) throw new AppError(401, "UNAUTHENTICATED", "Please log in");
+  const input = req.body as ChangePasswordInput;
+  const tokens = await authService.changePassword(
+    userId,
+    input.currentPassword,
+    input.newPassword,
+    sessionMeta(req),
+  );
+  setAuthCookies(res, tokens.accessToken, tokens.refreshToken);
+  res.json({ data: { ok: true } });
 }

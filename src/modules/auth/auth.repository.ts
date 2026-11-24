@@ -140,3 +140,70 @@ export async function linkGoogleAccount(
   ]);
   return user;
 }
+
+// ---------- Password reset ----------
+
+export interface NewPasswordResetToken {
+  userId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  requestedIp: string | null;
+  requestedUserAgent: string | null;
+}
+
+export function countRecentResetTokens(userId: string, since: Date) {
+  return prisma.passwordResetToken.count({
+    where: { userId, createdAt: { gte: since } },
+  });
+}
+
+// Older unused reset links stop working when a new one is requested or the password changes.
+export function invalidateResetTokens(userId: string) {
+  return prisma.passwordResetToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+}
+
+export function createPasswordResetToken(data: NewPasswordResetToken) {
+  return prisma.passwordResetToken.create({ data });
+}
+
+export function findResetTokenByHash(tokenHash: string) {
+  return prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    include: { user: true },
+  });
+}
+
+// Single use: only one request can flip usedAt from null. Expired tokens are refused too.
+export async function consumeResetToken(id: string): Promise<boolean> {
+  const now = new Date();
+  const result = await prisma.passwordResetToken.updateMany({
+    where: { id, usedAt: null, expiresAt: { gt: now } },
+    data: { usedAt: now },
+  });
+  return result.count === 1;
+}
+
+// New password + end every session of the user, in one transaction.
+export async function setPasswordAndRevokeSessions(
+  userId: string,
+  passwordHash: string,
+  markEmailVerified: boolean,
+): Promise<void> {
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash,
+        ...(markEmailVerified ? { emailVerifiedAt: now } : {}),
+      },
+    }),
+    prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+}

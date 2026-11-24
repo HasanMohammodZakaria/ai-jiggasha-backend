@@ -43,3 +43,15 @@ export function refreshTokenExpiry(): Date {
     Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
   );
 }
+
+// Password reset tokens: random, single use, only the hash is stored.
+export function generateResetToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function hashResetToken(token: string): string {
+  // The prefix keeps reset-token hashes separate from refresh-token hashes.
+  return createHmac("sha256", env.JWT_REFRESH_SECRET)
+    .update(`password-reset:${token}`)
+    .digest("hex");
+}

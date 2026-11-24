@@ -1,18 +1,24 @@
 import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth.middleware.js";
 import {
+  changePasswordLimiter,
+  forgotPasswordLimiter,
   googleLimiter,
   loginLimiter,
   refreshLimiter,
   registerLimiter,
+  resetPasswordLimiter,
 } from "../../middlewares/rateLimit.middleware.js";
 import { avatarUpload } from "../../middlewares/upload.middleware.js";
 import { validateBody } from "../../middlewares/validate.middleware.js";
 import * as controller from "./auth.controller.js";
 import {
+  changePasswordSchema,
+  forgotPasswordSchema,
   googleSchema,
   loginSchema,
   registerSchema,
+  resetPasswordSchema,
 } from "./auth.validators.js";
 
 export const authRouter = Router();
@@ -39,3 +45,23 @@ authRouter.post(
 authRouter.post("/refresh", refreshLimiter, controller.refresh);
 authRouter.post("/logout", controller.logout);
 authRouter.get("/me", requireAuth, controller.me);
+
+authRouter.post(
+  "/forgot-password",
+  forgotPasswordLimiter,
+  validateBody(forgotPasswordSchema),
+  controller.forgotPassword,
+);
+authRouter.post(
+  "/reset-password",
+  resetPasswordLimiter,
+  validateBody(resetPasswordSchema),
+  controller.resetPassword,
+);
+authRouter.post(
+  "/change-password",
+  requireAuth,
+  changePasswordLimiter,
+  validateBody(changePasswordSchema),
+  controller.changePassword,
+);
