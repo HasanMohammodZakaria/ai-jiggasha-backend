@@ -6,7 +6,11 @@ import {
 } from "../../shared/cookies.js";
 import { AppError } from "../../shared/errors.js";
 import * as authService from "./auth.service.js";
-import type { LoginInput, RegisterInput } from "./auth.validators.js";
+import type {
+  GoogleInput,
+  LoginInput,
+  RegisterInput,
+} from "./auth.validators.js";
 
 function sessionMeta(req: Request): authService.SessionMeta {
   return {
@@ -36,6 +40,18 @@ export async function login(req: Request, res: Response): Promise<void> {
   const result = await authService.login(input, sessionMeta(req));
   setAuthCookies(res, result.accessToken, result.refreshToken);
   res.json({ data: { user: result.user } });
+}
+
+export async function google(req: Request, res: Response): Promise<void> {
+  const input = req.body as GoogleInput;
+  const result = await authService.loginWithGoogle(
+    input.credential,
+    sessionMeta(req),
+  );
+  setAuthCookies(res, result.accessToken, result.refreshToken);
+  res
+    .status(result.isNewUser ? 201 : 200)
+    .json({ data: { user: result.user, isNewUser: result.isNewUser } });
 }
 
 export async function refresh(req: Request, res: Response): Promise<void> {

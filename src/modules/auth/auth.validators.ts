@@ -33,5 +33,14 @@ export const loginSchema = z.strictObject({
     .max(128, "Password is too long"),
 });
 
+export const googleSchema = z.strictObject({
+  credential: z
+    .string()
+    .min(20, "Missing Google credential")
+    .max(4096, "Invalid Google credential"),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
+
 export type LoginInput = z.infer<typeof loginSchema>;
+export type GoogleInput = z.infer<typeof googleSchema>;

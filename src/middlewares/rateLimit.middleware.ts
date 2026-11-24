@@ -31,3 +31,4 @@ const MINUTE = 60 * 1000;
 export const registerLimiter = limiter(60 * MINUTE, 10, 200);
 export const loginLimiter = limiter(15 * MINUTE, 10, 200);
 export const refreshLimiter = limiter(15 * MINUTE, 60, 500);
+export const googleLimiter = limiter(15 * MINUTE, 20, 200);

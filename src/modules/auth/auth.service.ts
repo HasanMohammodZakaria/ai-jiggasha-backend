@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type User } from "@prisma/client";
+import { verifyGoogleCredential } from "../../providers/auth/google.verifier.js";
 import {
   deleteImage,
   uploadAvatarImage,
@@ -43,6 +44,10 @@ export interface AuthResult extends Tokens {
   user: PublicUser;
 }
 
+export interface GoogleAuthResult extends AuthResult {
+  isNewUser: boolean;
+}
+
 // Never return passwordHash or storage keys to the client.
 export function toPublicUser(user: User): PublicUser {
   return {
@@ -77,6 +82,23 @@ function sessionExpired(): AppError {
     "SESSION_EXPIRED",
     "Your session has expired. Please log in again.",
   );
+}
+
+// A new login always starts a new session family with its first refresh token.
+async function startSession(
+  userId: string,
+  meta: SessionMeta,
+): Promise<Tokens> {
+  const refreshToken = generateRefreshToken();
+  await repo.createRefreshToken({
+    userId,
+    familyId: newFamilyId(),
+    tokenHash: hashRefreshToken(refreshToken),
+    expiresAt: refreshTokenExpiry(),
+    userAgent: meta.userAgent,
+    ipAddress: meta.ipAddress,
+  });
+  return { accessToken: signAccessToken(userId), refreshToken };
 }
 
 export async function register(
@@ -145,21 +167,103 @@ export async function login(
   if (!(await verifyPassword(user.passwordHash, input.password)))
     throw invalidCredentials();
 
-  // New login = new session family.
-  const refreshToken = generateRefreshToken();
-  await repo.createRefreshToken({
-    userId: user.id,
-    familyId: newFamilyId(),
-    tokenHash: hashRefreshToken(refreshToken),
-    expiresAt: refreshTokenExpiry(),
-    userAgent: meta.userAgent,
-    ipAddress: meta.ipAddress,
-  });
-  return {
-    user: toPublicUser(user),
-    accessToken: signAccessToken(user.id),
-    refreshToken,
-  };
+  return { user: toPublicUser(user), ...(await startSession(user.id, meta)) };
+}
+
+function displayName(name: string | null, email: string): string {
+  const fromGoogle = name?.trim();
+  if (fromGoogle && fromGoogle.length >= 2) return fromGoogle.slice(0, 80);
+  const fromEmail = email.split("@")[0] ?? "";
+  return fromEmail.length >= 2 ? fromEmail.slice(0, 80) : "Student";
+}
+
+// Sign in (or sign up) with a Google ID token. Identity = Google "sub", never the email alone.
+export async function loginWithGoogle(
+  credential: string,
+  meta: SessionMeta,
+): Promise<GoogleAuthResult> {
+  const identity = await verifyGoogleCredential(credential);
+  if (!identity.emailVerified) {
+    throw new AppError(
+      401,
+      "GOOGLE_EMAIL_NOT_VERIFIED",
+      "Your Google email address is not verified",
+    );
+  }
+
+  // 1) Already linked: just log in.
+  const linked = await repo.findGoogleAccount(identity.sub);
+  if (linked) {
+    return {
+      user: toPublicUser(linked.user),
+      ...(await startSession(linked.user.id, meta)),
+      isNewUser: false,
+    };
+  }
+
+  const account = { providerAccountId: identity.sub, email: identity.email };
+  const picture =
+    identity.picture && identity.picture.length <= 1000
+      ? identity.picture
+      : null;
+
+  try {
+    // 2) An account with this email already exists: link Google to it.
+    const existing = await repo.findUserByEmail(identity.email);
+    if (existing) {
+      // A password account was never email-verified (verification is not built yet), so someone else
+      // could have registered this address first. The Google owner has proven the address, so we
+      // remove that password (they can set a new one with "forgot password") and end all old sessions.
+      const user = await repo.linkGoogleAccount(existing.id, account, {
+        wipePassword:
+          existing.emailVerifiedAt === null && existing.passwordHash !== null,
+        avatarUrl: existing.avatarUrl ? null : picture,
+      });
+      return {
+        user: toPublicUser(user),
+        ...(await startSession(user.id, meta)),
+        isNewUser: false,
+      };
+    }
+
+    // 3) Brand new user.
+    const refreshToken = generateRefreshToken();
+    const user = await repo.createGoogleUser(
+      {
+        id: randomUUID(),
+        fullName: displayName(identity.name, identity.email),
+        email: identity.email,
+        avatarUrl: picture,
+      },
+      account,
+      {
+        familyId: newFamilyId(),
+        tokenHash: hashRefreshToken(refreshToken),
+        expiresAt: refreshTokenExpiry(),
+        userAgent: meta.userAgent,
+        ipAddress: meta.ipAddress,
+      },
+    );
+    return {
+      user: toPublicUser(user),
+      accessToken: signAccessToken(user.id),
+      refreshToken,
+      isNewUser: true,
+    };
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      // Two Google sign-ins for the same person at the same moment: the second one asks to retry.
+      throw new AppError(
+        409,
+        "GOOGLE_SIGNIN_CONFLICT",
+        "Please try signing in again",
+      );
+    }
+    throw err;
+  }
 }
 
 // Rotation: every refresh token works exactly once and is replaced by a new one.

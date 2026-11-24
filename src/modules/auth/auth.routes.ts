@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth.middleware.js";
 import {
+  googleLimiter,
   loginLimiter,
   refreshLimiter,
   registerLimiter,
@@ -8,7 +9,11 @@ import {
 import { avatarUpload } from "../../middlewares/upload.middleware.js";
 import { validateBody } from "../../middlewares/validate.middleware.js";
 import * as controller from "./auth.controller.js";
-import { loginSchema, registerSchema } from "./auth.validators.js";
+import {
+  googleSchema,
+  loginSchema,
+  registerSchema,
+} from "./auth.validators.js";
 
 export const authRouter = Router();
 
@@ -24,6 +29,12 @@ authRouter.post(
   loginLimiter,
   validateBody(loginSchema),
   controller.login,
+);
+authRouter.post(
+  "/google",
+  googleLimiter,
+  validateBody(googleSchema),
+  controller.google,
 );
 authRouter.post("/refresh", refreshLimiter, controller.refresh);
 authRouter.post("/logout", controller.logout);

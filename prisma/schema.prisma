@@ -24,6 +24,7 @@ model User {
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   refreshTokens RefreshToken[]
+  authAccounts  AuthAccount[]
 
   @@map("users")
 }
@@ -46,4 +47,23 @@ model RefreshToken {
   @@index([familyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+enum AuthProvider {
+  GOOGLE
+}
+
+model AuthAccount {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  provider          AuthProvider
+  providerAccountId String       @map("provider_account_id") @db.VarChar(255)
+  email             String       @db.VarChar(255)
+  createdAt         DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("auth_accounts")
 }

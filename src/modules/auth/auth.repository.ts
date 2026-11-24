@@ -1,3 +1,4 @@
+import { AuthProvider } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 
 export interface NewUser {
@@ -67,4 +68,75 @@ export function revokeFamily(familyId: string) {
     where: { familyId, revokedAt: null },
     data: { revokedAt: new Date() },
   });
+}
+
+// ---------- Google sign-in ----------
+
+export interface NewGoogleUser {
+  id: string;
+  fullName: string;
+  email: string;
+  avatarUrl: string | null;
+}
+
+export interface NewAuthAccount {
+  providerAccountId: string; // Google "sub"
+  email: string;
+}
+
+export function findGoogleAccount(providerAccountId: string) {
+  return prisma.authAccount.findUnique({
+    where: {
+      provider_providerAccountId: {
+        provider: AuthProvider.GOOGLE,
+        providerAccountId,
+      },
+    },
+    include: { user: true },
+  });
+}
+
+// One query: user + Google account + first refresh token (atomic). No password.
+export function createGoogleUser(
+  user: NewGoogleUser,
+  account: NewAuthAccount,
+  token: NewRefreshToken,
+) {
+  return prisma.user.create({
+    data: {
+      ...user,
+      emailVerifiedAt: new Date(), // Google already verified this email
+      authAccounts: { create: { provider: AuthProvider.GOOGLE, ...account } },
+      refreshTokens: { create: token },
+    },
+  });
+}
+
+// Links Google to an existing user. All in one transaction:
+// 1) create the link, 2) mark email verified (and optionally remove the password / set avatar),
+// 3) end every existing session of that user.
+export async function linkGoogleAccount(
+  userId: string,
+  account: NewAuthAccount,
+  options: { wipePassword: boolean; avatarUrl: string | null },
+) {
+  const now = new Date();
+  const [, user] = await prisma.$transaction([
+    prisma.authAccount.create({
+      data: { userId, provider: AuthProvider.GOOGLE, ...account },
+    }),
+    prisma.user.update({
+      where: { id: userId },
+      data: {
+        emailVerifiedAt: now,
+        ...(options.wipePassword ? { passwordHash: null } : {}),
+        ...(options.avatarUrl ? { avatarUrl: options.avatarUrl } : {}),
+      },
+    }),
+    prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+  return user;
 }

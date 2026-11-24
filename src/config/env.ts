@@ -22,7 +22,12 @@ const envSchema = z
       .default(15),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
     AVATAR_MAX_MB: z.coerce.number().min(0.1).max(10).default(2),
-
+    GOOGLE_CLIENT_ID: z
+      .string()
+      .regex(
+        /\.apps\.googleusercontent\.com$/,
+        "must end with .apps.googleusercontent.com",
+      ),
     CLOUDINARY_CLOUD_NAME: z.string().min(1),
     CLOUDINARY_API_KEY: z.string().min(1),
     CLOUDINARY_API_SECRET: z.string().min(1),
