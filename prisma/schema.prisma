@@ -2,15 +2,16 @@
 // Prisma 6.x pinned
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
 }
-
 
 model User {
   id               String    @id @default(uuid()) @db.Uuid
@@ -23,11 +24,11 @@ model User {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  refreshTokens RefreshToken[]
-  authAccounts  AuthAccount[]
+  refreshTokens       RefreshToken[]
+  authAccounts        AuthAccount[]
   passwordResetTokens PasswordResetToken[]
-  subjects Subject[]
-  documents Document[]
+  subjects            Subject[]
+  documents           Document[]
 
   @@map("users")
 }
@@ -133,11 +134,51 @@ model Document {
   createdAt    DateTime         @default(now()) @map("created_at")
   updatedAt    DateTime         @updatedAt @map("updated_at")
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  chunks  DocumentChunk[]
 
   @@index([userId, subjectId])
   @@index([userId, status])
   @@index([userId, sha256])
   @@map("documents")
+}
+
+// user_id is copied here on purpose: retrieval can filter "WHERE user_id = ..." directly.
+// Deleting a user deletes their documents, which deletes these chunks.
+model DocumentChunk {
+  id             String                      @id @default(uuid()) @db.Uuid
+  documentId     String                      @map("document_id") @db.Uuid
+  userId         String                      @map("user_id") @db.Uuid
+  chunkIndex     Int                         @map("chunk_index")
+  pageStart      Int?                        @map("page_start")
+  pageEnd        Int?                        @map("page_end")
+  sectionLabel   String?                     @map("section_label") @db.VarChar(255)
+  content        String
+  tokenCount     Int                         @map("token_count")
+  embedding      Unsupported("vector(1536)")?
+  embeddingModel String?                     @map("embedding_model") @db.VarChar(100)
+  createdAt      DateTime                    @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([userId, documentId])
+  @@map("document_chunks")
+}
+
+model AiUsageLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  provider  String   @db.VarChar(40)
+  model     String   @db.VarChar(100)
+  operation String   @db.VarChar(40)
+  units     Int      @default(1)
+  tokensIn  Int?     @map("tokens_in")
+  latencyMs Int      @map("latency_ms")
+  status    String   @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([operation, createdAt])
+  @@map("ai_usage_logs")
 }
