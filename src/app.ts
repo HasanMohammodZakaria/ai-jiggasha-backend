@@ -11,6 +11,7 @@ import {
   notFoundHandler,
 } from "./middlewares/error.middleware.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { subjectsRouter } from "./modules/subjects/subjects.routes.js";
 
 export function createApp() {
   const app = express();
@@ -32,6 +33,7 @@ export function createApp() {
   });
 
   app.use("/api/auth", authRouter);
+  app.use("/api/subjects", subjectsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

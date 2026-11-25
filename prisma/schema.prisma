@@ -26,6 +26,8 @@ model User {
   refreshTokens RefreshToken[]
   authAccounts  AuthAccount[]
   passwordResetTokens PasswordResetToken[]
+  subjects Subject[]
+  documents Document[]
 
   @@map("users")
 }
@@ -84,4 +86,58 @@ model PasswordResetToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("password_reset_tokens")
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum DocumentFileType {
+  PDF
+  DOCX
+}
+
+model Subject {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@unique([userId, name])
+  @@map("subjects")
+}
+
+model Document {
+  id           String           @id @default(uuid()) @db.Uuid
+  userId       String           @map("user_id") @db.Uuid
+  subjectId    String?          @map("subject_id") @db.Uuid
+  title        String           @db.VarChar(255)
+  originalName String           @map("original_name") @db.VarChar(255)
+  fileType     DocumentFileType @map("file_type")
+  mimeType     String           @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int              @map("size_bytes")
+  sha256       String           @db.VarChar(64)
+  storageKey   String           @map("storage_key")
+  status       DocumentStatus   @default(UPLOADED)
+  errorMessage String?          @map("error_message") @db.VarChar(500)
+  pageCount    Int?             @map("page_count")
+  language     String?          @db.VarChar(10)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, subjectId])
+  @@index([userId, status])
+  @@index([userId, sha256])
+  @@map("documents")
 }
