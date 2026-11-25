@@ -22,6 +22,7 @@ const envSchema = z
       .default(15),
     REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(7),
     AVATAR_MAX_MB: z.coerce.number().min(0.1).max(10).default(2),
+    DOCUMENT_MAX_MB: z.coerce.number().min(1).max(25).default(10),
     GOOGLE_CLIENT_ID: z
       .string()
       .regex(
