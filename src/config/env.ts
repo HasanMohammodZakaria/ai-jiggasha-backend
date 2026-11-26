@@ -3,6 +3,12 @@ import { z } from "zod";
 
 dotenv.config({ quiet: true });
 
+// An optional key left empty in .env counts as "not set".
+const optionalKey = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(10).optional(),
+);
+
 const envSchema = z
   .object({
     NODE_ENV: z
@@ -42,6 +48,27 @@ const envSchema = z
     CLOUDINARY_CLOUD_NAME: z.string().min(1),
     CLOUDINARY_API_KEY: z.string().min(1),
     CLOUDINARY_API_SECRET: z.string().min(1),
+
+    // AI / ingestion (free-tier limits, kept a little below Google's published numbers)
+    GEMINI_API_KEY: z.string().min(10),
+    EMBEDDING_MODEL: z.string().min(1).default("gemini-embedding-001"),
+    EMBEDDING_MAX_RPM: z.coerce.number().int().min(1).default(60),
+    EMBEDDING_MAX_TPM: z.coerce.number().int().min(1000).default(25000),
+    EMBEDDING_DAILY_BUDGET: z.coerce.number().int().min(1).default(850),
+    MAX_PAGES_PER_DOCUMENT: z.coerce.number().int().min(1).default(150),
+    MAX_CHUNKS_PER_DOCUMENT: z.coerce.number().int().min(1).default(400),
+
+    // AI chat. Model names change often: check Google AI Studio, Groq and OpenRouter for current ones.
+    GEMINI_CHAT_MODEL: z.string().min(1).default("gemini-2.5-flash"),
+    GROQ_API_KEY: optionalKey,
+    GROQ_MODEL: z.string().min(1).default("llama-3.3-70b-versatile"),
+    OPENROUTER_API_KEY: optionalKey,
+    OPENROUTER_MODEL: z
+      .string()
+      .min(1)
+      .default("meta-llama/llama-3.3-70b-instruct:free"),
+    RAG_TOP_K: z.coerce.number().int().min(1).max(12).default(6),
+    RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.55),
   })
   .refine((v) => v.JWT_ACCESS_SECRET !== v.JWT_REFRESH_SECRET, {
     path: ["JWT_REFRESH_SECRET"],

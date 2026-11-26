@@ -29,6 +29,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   subjects            Subject[]
   documents           Document[]
+  conversations Conversation[]
 
   @@map("users")
 }
@@ -111,6 +112,7 @@ model Subject {
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   documents Document[]
+  conversations Conversation[]
 
   @@unique([userId, name])
   @@map("subjects")
@@ -137,6 +139,7 @@ model Document {
   user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   subject Subject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   chunks  DocumentChunk[]
+  conversationLinks ConversationDocument[]
 
   @@index([userId, subjectId])
   @@index([userId, status])
@@ -161,6 +164,7 @@ model DocumentChunk {
   createdAt      DateTime                    @default(now()) @map("created_at")
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sources MessageSource[]
 
   @@unique([documentId, chunkIndex])
   @@index([userId, documentId])
@@ -181,4 +185,82 @@ model AiUsageLog {
 
   @@index([operation, createdAt])
   @@map("ai_usage_logs")
+}
+
+enum ConversationScope {
+  ALL
+  SUBJECT
+  DOCUMENTS
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+model Conversation {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String            @map("user_id") @db.Uuid
+  subjectId String?           @map("subject_id") @db.Uuid
+  title     String            @db.VarChar(200)
+  scope     ConversationScope @default(ALL)
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject?               @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  documents ConversationDocument[]
+  messages  Message[]
+
+  @@index([userId, updatedAt])
+  @@map("conversations")
+}
+
+model ConversationDocument {
+  conversationId String @map("conversation_id") @db.Uuid
+  documentId     String @map("document_id") @db.Uuid
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  document     Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, documentId])
+  @@index([documentId])
+  @@map("conversation_documents")
+}
+
+model Message {
+  id             String      @id @default(uuid()) @db.Uuid
+  conversationId String      @map("conversation_id") @db.Uuid
+  role           MessageRole
+  content        String
+  provider       String?     @db.VarChar(40)
+  model          String?     @db.VarChar(100)
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  conversation Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sources      MessageSource[]
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+// A snapshot of where an answer came from: it survives even if the document is deleted later.
+model MessageSource {
+  id            String  @id @default(uuid()) @db.Uuid
+  messageId     String  @map("message_id") @db.Uuid
+  chunkId       String? @map("chunk_id") @db.Uuid
+  documentId    String? @map("document_id") @db.Uuid
+  documentTitle String  @map("document_title") @db.VarChar(255)
+  pageStart     Int?    @map("page_start")
+  pageEnd       Int?    @map("page_end")
+  sectionLabel  String? @map("section_label") @db.VarChar(255)
+  excerpt       String  @db.VarChar(500)
+  score         Float
+  position      Int
+
+  message Message        @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  chunk   DocumentChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@index([messageId])
+  @@map("message_sources")
 }
