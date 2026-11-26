@@ -9,6 +9,9 @@ const optionalKey = z.preprocess(
   z.string().min(10).optional(),
 );
 
+// Providers that can answer questions. Add a new name here when a new provider is supported.
+const answerProviders = ["groq", "openrouter", "mistral"] as const;
+
 const envSchema = z
   .object({
     NODE_ENV: z
@@ -49,7 +52,7 @@ const envSchema = z
     CLOUDINARY_API_KEY: z.string().min(1),
     CLOUDINARY_API_SECRET: z.string().min(1),
 
-    // AI / ingestion (free-tier limits, kept a little below Google's published numbers)
+    // Embeddings: Gemini only, no fallback (vectors from different models cannot be mixed).
     GEMINI_API_KEY: z.string().min(10),
     EMBEDDING_MODEL: z.string().min(1).default("gemini-embedding-001"),
     EMBEDDING_MAX_RPM: z.coerce.number().int().min(1).default(60),
@@ -58,22 +61,45 @@ const envSchema = z
     MAX_PAGES_PER_DOCUMENT: z.coerce.number().int().min(1).default(150),
     MAX_CHUNKS_PER_DOCUMENT: z.coerce.number().int().min(1).default(400),
 
-    // AI chat. Model names change often: check Google AI Studio, Groq and OpenRouter for current ones.
-    GEMINI_CHAT_MODEL: z.string().min(1).default("gemini-2.5-flash"),
+    // Answers: free-tier providers tried in the order of ANSWER_FALLBACK_ORDER.
+    // Model names change often: check each provider's site for current names.
     GROQ_API_KEY: optionalKey,
-    GROQ_MODEL: z.string().min(1).default("llama-3.3-70b-versatile"),
+    GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
     OPENROUTER_API_KEY: optionalKey,
-    OPENROUTER_MODEL: z
+    OPENROUTER_MODEL: z.string().min(1).default("google/gemma-3-27b-it:free"),
+    MISTRAL_API_KEY: optionalKey,
+    MISTRAL_MODEL: z.string().min(1).default("mistral-small-latest"),
+    ANSWER_FALLBACK_ORDER: z
       .string()
-      .min(1)
-      .default("meta-llama/llama-3.3-70b-instruct:free"),
+      .default("groq,openrouter,mistral")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((name) => name.trim().toLowerCase())
+          .filter((name) => name.length > 0),
+      )
+      .pipe(z.array(z.enum(answerProviders)).min(1)),
+
     RAG_TOP_K: z.coerce.number().int().min(1).max(12).default(6),
     RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.55),
   })
   .refine((v) => v.JWT_ACCESS_SECRET !== v.JWT_REFRESH_SECRET, {
     path: ["JWT_REFRESH_SECRET"],
     message: "must be different from JWT_ACCESS_SECRET",
-  });
+  })
+  .refine(
+    (v) =>
+      v.ANSWER_FALLBACK_ORDER.some(
+        (name) =>
+          (name === "groq" && v.GROQ_API_KEY) ||
+          (name === "openrouter" && v.OPENROUTER_API_KEY) ||
+          (name === "mistral" && v.MISTRAL_API_KEY),
+      ),
+    {
+      path: ["ANSWER_FALLBACK_ORDER"],
+      message: "no API key is set for any provider in this list",
+    },
+  );
 
 const parsed = envSchema.safeParse(process.env);
 

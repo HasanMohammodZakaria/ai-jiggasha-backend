@@ -1,40 +1,47 @@
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import { AppError } from "../../shared/errors.js";
-import { createGeminiProvider } from "./gemini.llm.js";
 import { LlmError, type LlmProvider, type LlmRequest } from "./llm.types.js";
 import { createOpenAiCompatibleProvider } from "./openai-compatible.llm.js";
 import { logAiUsage } from "./usage.log.js";
 
-// Order matters: Gemini first, then Groq, then OpenRouter. A provider without a key is skipped.
-const providers: LlmProvider[] = [
-  createGeminiProvider(),
-  ...(env.GROQ_API_KEY
-    ? [
-        createOpenAiCompatibleProvider({
-          name: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          apiKey: env.GROQ_API_KEY,
-          model: env.GROQ_MODEL,
-          headers: {},
-        }),
-      ]
-    : []),
-  ...(env.OPENROUTER_API_KEY
-    ? [
-        createOpenAiCompatibleProvider({
-          name: "openrouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          apiKey: env.OPENROUTER_API_KEY,
-          model: env.OPENROUTER_MODEL,
-          headers: {
-            "HTTP-Referer": env.FRONTEND_ORIGIN,
-            "X-Title": "Jiggasha",
-          },
-        }),
-      ]
-    : []),
-];
+type ProviderName = (typeof env.ANSWER_FALLBACK_ORDER)[number];
+
+// Every provider with a key. The order they are tried in comes from ANSWER_FALLBACK_ORDER.
+const available: Record<ProviderName, LlmProvider | null> = {
+  groq: env.GROQ_API_KEY
+    ? createOpenAiCompatibleProvider({
+        name: "groq",
+        baseUrl: "https://api.groq.com/openai/v1",
+        apiKey: env.GROQ_API_KEY,
+        model: env.GROQ_MODEL,
+        headers: {},
+      })
+    : null,
+  openrouter: env.OPENROUTER_API_KEY
+    ? createOpenAiCompatibleProvider({
+        name: "openrouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: env.OPENROUTER_API_KEY,
+        model: env.OPENROUTER_MODEL,
+        headers: { "HTTP-Referer": env.FRONTEND_ORIGIN, "X-Title": "Jiggasha" },
+      })
+    : null,
+  mistral: env.MISTRAL_API_KEY
+    ? createOpenAiCompatibleProvider({
+        name: "mistral",
+        baseUrl: "https://api.mistral.ai/v1",
+        apiKey: env.MISTRAL_API_KEY,
+        model: env.MISTRAL_MODEL,
+        headers: {},
+      })
+    : null,
+};
+
+// A provider without a key is skipped. Gemini is not used for answers, only for embeddings.
+const providers: LlmProvider[] = [...new Set(env.ANSWER_FALLBACK_ORDER)]
+  .map((name) => available[name])
+  .filter((provider): provider is LlmProvider => provider !== null);
 
 // First try, then two retries (1 s and 3 s later) for temporary errors.
 const ATTEMPT_DELAYS_MS = [0, 1_000, 3_000];
