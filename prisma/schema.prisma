@@ -30,6 +30,10 @@ model User {
   subjects            Subject[]
   documents           Document[]
   conversations Conversation[]
+  summaries Summary[] 
+  flashcardSets FlashcardSet[]
+  quizzes Quiz[]
+  quizAttempts QuizAttempt[]
 
   @@map("users")
 }
@@ -140,6 +144,9 @@ model Document {
   subject Subject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   chunks  DocumentChunk[]
   conversationLinks ConversationDocument[]
+  summaries Summary[]
+  flashcardSets FlashcardSet[]
+  quizzes Quiz[]
 
   @@index([userId, subjectId])
   @@index([userId, status])
@@ -165,6 +172,7 @@ model DocumentChunk {
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   sources MessageSource[]
+  uizQuestions QuizQuestion[]
 
   @@unique([documentId, chunkIndex])
   @@index([userId, documentId])
@@ -263,4 +271,111 @@ model MessageSource {
 
   @@index([messageId])
   @@map("message_sources")
+}
+
+enum SummaryLength {
+  SHORT
+  MEDIUM
+  DETAILED
+}
+
+model Summary {
+  id            String        @id @default(uuid()) @db.Uuid
+  userId        String        @map("user_id") @db.Uuid
+  documentId    String?       @map("document_id") @db.Uuid
+  documentTitle String        @map("document_title") @db.VarChar(255)
+  length        SummaryLength
+  content       String
+  provider      String        @db.VarChar(40)
+  model         String        @db.VarChar(100)
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([documentId])
+  @@map("summaries")
+}
+
+model FlashcardSet {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  documentId String?  @map("document_id") @db.Uuid
+  title      String   @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document?   @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  cards    Flashcard[]
+
+  @@index([userId, createdAt])
+  @@index([documentId])
+  @@map("flashcard_sets")
+}
+
+model Flashcard {
+  id       String @id @default(uuid()) @db.Uuid
+  setId    String @map("set_id") @db.Uuid
+  position Int
+  front    String
+  back     String
+
+  set FlashcardSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+
+  @@index([setId, position])
+  @@map("flashcards")
+}
+
+model Quiz {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  documentId String?  @map("document_id") @db.Uuid
+  title      String   @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document  Document?      @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([userId, createdAt])
+  @@index([documentId])
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id                 String  @id @default(uuid()) @db.Uuid
+  quizId             String  @map("quiz_id") @db.Uuid
+  position           Int
+  question           String
+  options            Json
+  correctIndex       Int     @map("correct_index")
+  explanation        String
+  sourceChunkId      String? @map("source_chunk_id") @db.Uuid
+  sourcePageStart    Int?    @map("source_page_start")
+  sourceSectionLabel String? @map("source_section_label") @db.VarChar(255)
+
+  quiz        Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  sourceChunk DocumentChunk? @relation(fields: [sourceChunkId], references: [id], onDelete: SetNull)
+
+  @@index([quizId, position])
+  @@map("quiz_questions")
+}
+
+model QuizAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  quizId    String   @map("quiz_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  answers   Json
+  score     Int
+  total     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([quizId, createdAt])
+  @@index([userId])
+  @@map("quiz_attempts")
 }
