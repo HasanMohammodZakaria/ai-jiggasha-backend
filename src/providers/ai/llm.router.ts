@@ -95,7 +95,7 @@ export async function generateAnswer(
         logger.warn(
           {
             provider: provider.name,
-            errorName: err instanceof Error ? err.name : "unknown",
+            reason: err instanceof Error ? err.message : "unknown",
           },
           "LLM attempt failed",
         );

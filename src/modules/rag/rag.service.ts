@@ -91,15 +91,28 @@ async function embedQuestion(
   }
 }
 
-// The model's [1] [2] markers only pick which retrieved chunks to show. The page, title and
+// Models write citations as [1] but some use fullwidth brackets like 【1】: accept both.
+const MARKER = /[\[【](\d{1,2})[\]】]/g;
+
+// The model's markers only pick which retrieved chunks to show. The page, title and
 // excerpt always come from our database, never from the model's text.
 function citedNumbers(text: string, max: number): number[] {
   const found = new Set<number>();
-  for (const match of text.matchAll(/\[(\d{1,2})\]/g)) {
+  for (const match of text.matchAll(MARKER)) {
     const n = Number(match[1]);
     if (n >= 1 && n <= max) found.add(n);
   }
   return [...found].sort((a, b) => a - b);
+}
+
+// Renumbers the markers to match the order of the sources we show, so [1] is always the
+// first source card. Markers that point to nothing are removed.
+function renumber(text: string, order: number[]): string {
+  const mapping = new Map(order.map((n, index) => [n, index + 1]));
+  return text.replace(MARKER, (_match: string, digits: string) => {
+    const mapped = mapping.get(Number(digits));
+    return mapped !== undefined ? `[${mapped}]` : "";
+  });
 }
 
 function toSource(chunk: SourceChunk): AnswerSource {
@@ -159,7 +172,7 @@ export async function answerQuestion(params: AnswerParams): Promise<RagAnswer> {
       : chunks.slice(0, 3);
 
   return {
-    content: answer.text,
+    content: renumber(answer.text, cited),
     provider: answer.provider,
     model: answer.model,
     usedFallback: answer.usedFallback,

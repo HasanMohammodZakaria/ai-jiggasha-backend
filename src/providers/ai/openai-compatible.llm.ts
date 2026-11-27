@@ -50,10 +50,8 @@ export function createOpenAiCompatibleProvider(options: Options): LlmProvider {
       }
 
       if (!response.ok) {
-        const retryable =
-          response.status === 408 ||
-          response.status === 429 ||
-          response.status >= 500;
+        // A 429 will not clear in a few seconds: go straight to the next provider.
+        const retryable = response.status === 408 || response.status >= 500;
         throw new LlmError(
           `${options.name} returned ${response.status}`,
           retryable,
