@@ -1,5 +1,6 @@
 import { Prisma, type ConversationScope } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
+import { retryRead } from "../../shared/db-retry.js";
 
 export interface RetrievalScope {
   kind: ConversationScope;
@@ -39,21 +40,23 @@ export async function searchChunks(
 
   const vectorLiteral = `[${vector.join(",")}]`;
 
-  return prisma.$queryRaw<SourceChunk[]>(Prisma.sql`
-    SELECT c.id::text AS id,
-           c.document_id::text AS "documentId",
-           d.title AS "documentTitle",
-           c.page_start AS "pageStart",
-           c.page_end AS "pageEnd",
-           c.section_label AS "sectionLabel",
-           c.content AS content,
-           1 - (c.embedding <=> ${vectorLiteral}::vector) AS score
-    FROM document_chunks c
-    JOIN documents d ON d.id = c.document_id
-    WHERE c.user_id = ${userId}::uuid
-      AND c.embedding IS NOT NULL
-      AND d.status = 'READY'
-      ${scopeSql}
-    ORDER BY c.embedding <=> ${vectorLiteral}::vector
-    LIMIT ${limit}`);
+  return retryRead(() =>
+    prisma.$queryRaw<SourceChunk[]>(Prisma.sql`
+      SELECT c.id::text AS id,
+             c.document_id::text AS "documentId",
+             d.title AS "documentTitle",
+             c.page_start AS "pageStart",
+             c.page_end AS "pageEnd",
+             c.section_label AS "sectionLabel",
+             c.content AS content,
+             1 - (c.embedding <=> ${vectorLiteral}::vector) AS score
+      FROM document_chunks c
+      JOIN documents d ON d.id = c.document_id
+      WHERE c.user_id = ${userId}::uuid
+        AND c.embedding IS NOT NULL
+        AND d.status = 'READY'
+        ${scopeSql}
+      ORDER BY c.embedding <=> ${vectorLiteral}::vector
+      LIMIT ${limit}`),
+  );
 }

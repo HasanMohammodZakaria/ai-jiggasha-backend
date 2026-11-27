@@ -20,7 +20,6 @@ import type {
 
 const DOWNLOAD_LINK_SECONDS = 5 * 60;
 
-// The real file type is read from the file's bytes, never from its name or the browser's mime type.
 const ALLOWED_TYPES: Record<
   string,
   { fileType: DocumentFileType; extension: "pdf" | "docx" }
@@ -55,7 +54,6 @@ export interface DocumentPage {
   limit: number;
 }
 
-// Never return sha256 or the storage key to the client.
 function toPublicDocument(doc: DocumentRow): PublicDocument {
   return {
     id: doc.id,
@@ -82,7 +80,6 @@ function subjectNotFound(): AppError {
   return new AppError(404, "SUBJECT_NOT_FOUND", "Subject not found");
 }
 
-// Browsers send file names as UTF-8 but multer reads them as latin1: this restores Bangla/Urdu/Arabic names.
 function cleanFileName(raw: string): string {
   const decoded = Buffer.from(raw, "latin1").toString("utf8");
   const base = decoded.split(/[\\/]/).pop() ?? decoded;
@@ -92,6 +89,33 @@ function cleanFileName(raw: string): string {
 function titleFromFileName(fileName: string): string {
   const withoutExtension = fileName.replace(/\.[^.]+$/, "").trim();
   return (withoutExtension || fileName).slice(0, 255);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function enqueueWithRetry(
+  documentId: string,
+  attempts = 3,
+): Promise<void> {
+  let lastError: unknown;
+  for (let i = 1; i <= attempts; i += 1) {
+    try {
+      await enqueueEmbedding(documentId);
+      return;
+    } catch (err) {
+      lastError = err;
+      logger.warn(
+        { documentId, attempt: i, attempts },
+        "Retrying document embedding queue",
+      );
+      if (i < attempts) {
+        await sleep(i * 1000);
+      }
+    }
+  }
+  throw lastError;
 }
 
 export async function uploadDocument(
@@ -127,7 +151,6 @@ export async function uploadDocument(
     );
   }
 
-  // Read and split the text first: an unreadable file is rejected before anything is stored.
   const prepared = await prepareDocument(buffer, allowed.fileType);
 
   const originalName = cleanFileName(rawFileName);
@@ -158,13 +181,12 @@ export async function uploadDocument(
       prepared.chunks,
     );
   } catch (err) {
-    // Saving failed after the upload: do not leave an orphan file behind.
-    await documentStorage.remove(storageKey);
+    await documentStorage.remove(storageKey).catch(() => {});
     throw err;
   }
 
   try {
-    await enqueueEmbedding(doc.id);
+    await enqueueWithRetry(doc.id, 3);
   } catch (err) {
     logger.error(
       {
@@ -175,7 +197,7 @@ export async function uploadDocument(
     );
     await markFailed(
       doc.id,
-      "We could not start processing this document. Please upload it again.",
+      "Temporary connection issue while queuing document. Please try again.",
     );
     const failed = await repo.findDocument(userId, doc.id);
     return toPublicDocument(failed ?? doc);

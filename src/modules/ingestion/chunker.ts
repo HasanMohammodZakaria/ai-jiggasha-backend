@@ -56,7 +56,8 @@ export function buildChunks(pieces: Piece[], language: string | null): Chunk[] {
   let section: string | null = null;
   let hasNew = false; // true once the current chunk holds text that is not just overlap
 
-  const flush = (): void => {
+  // carryOverlap is false at a new heading: the next chunk starts clean in the new section.
+  const flush = (carryOverlap: boolean): void => {
     if (!hasNew) return;
     const content = parts.join(" ").trim();
     chunks.push({
@@ -67,7 +68,7 @@ export function buildChunks(pieces: Piece[], language: string | null): Chunk[] {
       sectionLabel: section,
       tokenCount: Math.ceil(content.length / cfg.charsPerToken),
     });
-    const carry = overlapTail(content, cfg.overlap);
+    const carry = carryOverlap ? overlapTail(content, cfg.overlap) : "";
     parts = carry ? [carry] : [];
     length = carry.length;
     pages = [];
@@ -76,8 +77,12 @@ export function buildChunks(pieces: Piece[], language: string | null): Chunk[] {
   };
 
   for (const piece of pieces) {
+    // A new heading starts a new chunk, so one chunk never mixes two sections.
+    // PDF pieces have no section, so this never triggers for PDFs.
+    if (hasNew && piece.section !== section) flush(false);
+
     for (const part of splitLong(piece.text, cfg.target)) {
-      if (hasNew && length + 1 + part.length > cfg.target) flush();
+      if (hasNew && length + 1 + part.length > cfg.target) flush(true);
       if (!hasNew) section = piece.section;
       parts.push(part);
       length += part.length + 1;
@@ -85,7 +90,7 @@ export function buildChunks(pieces: Piece[], language: string | null): Chunk[] {
       if (piece.page !== null) pages.push(piece.page);
     }
   }
-  flush();
+  flush(true);
 
   return chunks;
 }

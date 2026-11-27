@@ -8,3 +8,5 @@ coverage
 .DS_Store
 EOF
 notes
+scripts
+test-files/
