@@ -5,8 +5,12 @@ import {
   type DocumentStatus,
 } from "@prisma/client";
 import { fileTypeFromBuffer } from "file-type";
+import { logger } from "../../config/logger.js";
 import { documentStorage } from "../../providers/storage/cloudinary.documents.js";
 import { AppError } from "../../shared/errors.js";
+import { enqueueEmbedding } from "../ingestion/ingestion.queue.js";
+import { markFailed } from "../ingestion/ingestion.repository.js";
+import { prepareDocument } from "../ingestion/ingestion.service.js";
 import * as repo from "./documents.repository.js";
 import type {
   ListDocumentsQuery,
@@ -123,6 +127,9 @@ export async function uploadDocument(
     );
   }
 
+  // Read and split the text first: an unreadable file is rejected before anything is stored.
+  const prepared = await prepareDocument(buffer, allowed.fileType);
+
   const originalName = cleanFileName(rawFileName);
   const documentId = randomUUID();
   const storageKey = await documentStorage.upload(buffer, {
@@ -131,25 +138,50 @@ export async function uploadDocument(
     extension: allowed.extension,
   });
 
+  let doc: DocumentRow;
   try {
-    const doc = await repo.createDocument({
-      id: documentId,
-      userId,
-      subjectId: input.subjectId ?? null,
-      title: input.title ?? titleFromFileName(originalName),
-      originalName,
-      fileType: allowed.fileType,
-      mimeType: detected.mime,
-      sizeBytes: buffer.length,
-      sha256,
-      storageKey,
-    });
-    return toPublicDocument(doc);
+    doc = await repo.createDocumentWithChunks(
+      {
+        id: documentId,
+        userId,
+        subjectId: input.subjectId ?? null,
+        title: input.title ?? titleFromFileName(originalName),
+        originalName,
+        fileType: allowed.fileType,
+        mimeType: detected.mime,
+        sizeBytes: buffer.length,
+        sha256,
+        storageKey,
+        pageCount: prepared.pageCount,
+        language: prepared.language,
+      },
+      prepared.chunks,
+    );
   } catch (err) {
     // Saving failed after the upload: do not leave an orphan file behind.
     await documentStorage.remove(storageKey);
     throw err;
   }
+
+  try {
+    await enqueueEmbedding(doc.id);
+  } catch (err) {
+    logger.error(
+      {
+        documentId: doc.id,
+        errorName: err instanceof Error ? err.name : "unknown",
+      },
+      "Could not queue document for processing",
+    );
+    await markFailed(
+      doc.id,
+      "We could not start processing this document. Please upload it again.",
+    );
+    const failed = await repo.findDocument(userId, doc.id);
+    return toPublicDocument(failed ?? doc);
+  }
+
+  return toPublicDocument(doc);
 }
 
 export async function listDocuments(

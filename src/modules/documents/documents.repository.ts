@@ -4,6 +4,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
+import type { Chunk } from "../ingestion/chunker.js";
 
 export interface NewDocument {
   id: string;
@@ -16,6 +17,8 @@ export interface NewDocument {
   sizeBytes: number;
   sha256: string;
   storageKey: string;
+  pageCount: number | null;
+  language: string | null;
 }
 
 export interface DocumentChanges {
@@ -44,8 +47,24 @@ export function findDuplicate(userId: string, sha256: string) {
   });
 }
 
-export function createDocument(data: NewDocument) {
-  return prisma.document.create({ data });
+// The document and all its chunks are saved together (atomic). Chunks have no embedding yet.
+export function createDocumentWithChunks(data: NewDocument, chunks: Chunk[]) {
+  return prisma.$transaction(
+    async (tx) => {
+      const doc = await tx.document.create({
+        data: { ...data, status: DocumentStatus.PROCESSING },
+      });
+      await tx.documentChunk.createMany({
+        data: chunks.map((chunk) => ({
+          documentId: doc.id,
+          userId: data.userId,
+          ...chunk,
+        })),
+      });
+      return doc;
+    },
+    { timeout: 30_000 },
+  );
 }
 
 // findFirst with userId: someone else's document looks exactly like "not found".
@@ -89,6 +108,7 @@ export async function updateDocument(
   return result.count === 1;
 }
 
+// Chunks are removed by the database (onDelete: Cascade).
 export async function deleteDocument(
   userId: string,
   id: string,
